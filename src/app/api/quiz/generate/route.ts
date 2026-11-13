@@ -2,6 +2,11 @@ import { groq } from "@ai-sdk/groq";
 import { createClient } from "@supabase/supabase-js";
 import { generateText } from "ai";
 import { NextResponse } from "next/server";
+import {
+  RawGeneratedQuestion,
+  resolveQuestionCitation,
+  selectContextChunks,
+} from "@/lib/quizCitations";
 
 const MODEL_ID = "openai/gpt-oss-120b";
 
@@ -38,15 +43,6 @@ function normalizeSupabaseBaseUrl(value: string | undefined): string | null {
   } catch {
     return null;
   }
-}
-
-interface GeneratedQuestion {
-  prompt: string;
-  options: string[];
-  correctIndex: number;
-  explanation: string;
-  sourcePages?: number[];
-  supportingText?: string;
 }
 
 export async function POST(request: Request) {
@@ -127,17 +123,20 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Fetch associated material chunks
-  let chunksQuery = supabase
-    .from("material_chunks")
-    .select("chunk_index, page_number, content")
-    .eq("user_id", user.id);
-
-  if (topic.material_id) {
-    chunksQuery = chunksQuery.eq("material_id", topic.material_id);
+  if (!topic.material_id) {
+    return NextResponse.json(
+      { success: false, error: "Topic is not linked to any study material." },
+      { status: 422 }
+    );
   }
 
-  const { data: chunks, error: chunksErr } = await chunksQuery.order("chunk_index", { ascending: true });
+  // 2. Fetch associated material chunks strictly isolated by user_id and material_id
+  const { data: chunks, error: chunksErr } = await supabase
+    .from("material_chunks")
+    .select("chunk_index, page_number, content")
+    .eq("user_id", user.id)
+    .eq("material_id", topic.material_id)
+    .order("chunk_index", { ascending: true });
 
   if (chunksErr || !chunks || chunks.length === 0) {
     return NextResponse.json(
@@ -146,13 +145,8 @@ export async function POST(request: Request) {
     );
   }
 
-  // Prepare document context emphasizing topic's cited pages or key concepts
-  const relevantChunks =
-    Array.isArray(topic.source_page_numbers) && topic.source_page_numbers.length > 0
-      ? chunks.filter((c) => topic.source_page_numbers.includes(c.page_number))
-      : chunks;
-
-  const chunksToUse = relevantChunks.length > 0 ? relevantChunks : chunks;
+  // 3. Prepare document context using bounded selection
+  const chunksToUse = selectContextChunks(chunks, topic);
   const documentContext = chunksToUse
     .map((c) => `[PAGE ${c.page_number} | CHUNK ${c.chunk_index}]:\n${c.content}`)
     .join("\n\n---\n\n");
@@ -164,10 +158,24 @@ TOPIC DETAILS:
 - Key Concepts: ${JSON.stringify(topic.key_concepts || [])}
 - Definitions: ${JSON.stringify(topic.definitions || [])}
 - Subtopics: ${JSON.stringify(topic.subtopics || [])}
-- Source Pages: ${JSON.stringify(topic.source_page_numbers || [])}
 
 DOCUMENT TEXT CHUNKS (ONLY use content and facts from this document):
 ${documentContext}
+
+EVIDENCE-FIRST GENERATION PROCEDURE:
+For every question you create, follow this exact sequence:
+1. Select a specific factual statement or passage in the provided [PAGE X | CHUNK Y] chunks that directly proves a fact.
+2. Formulate the question ("prompt") and 4 options based strictly on that identified statement.
+3. Mark "correctIndex" (0, 1, 2, or 3) for the single correct answer verified by that document chunk.
+4. Set "sourcePages" as an array of numbers citing the genuine page from the [PAGE X] chunk containing that statement (e.g. [2]). Do not default to page 1.
+5. In "supportingText", provide the exact quote or key sentence from that chunk that directly proves the correct answer is true.
+6. Provide a thorough "explanation" of why that answer is correct based on the document.
+
+CRITICAL GROUNDING RULES:
+- The "supportingText" MUST directly contain the factual proof for why the correct option is true.
+- NEVER pair a question about one concept (e.g. xylem water transport) with a quotation from an unrelated section or experiment (e.g. pondweed oxygen bubbles).
+- For questions on equations, formulas, or chemical reactions, cite the specific chunk containing that equation or formula, not a general concept definition.
+- Strictly avoid general knowledge outside the provided document.
 
 REQUIREMENTS:
 1. Generate EXACTLY 5 multiple-choice questions (MCQs).
@@ -175,9 +183,6 @@ REQUIREMENTS:
 3. Provide EXACTLY 4 distinct plausible options (indices 0, 1, 2, 3) per question.
 4. Mark the correct answer with "correctIndex" (0, 1, 2, or 3).
 5. Include a thorough "explanation" of why that answer is correct.
-6. Include "sourcePages" (an array of numbers, e.g. [1]) indicating which page of the text supports the answer.
-7. Include "supportingText" (a direct quote or phrase from the document).
-8. Strictly avoid general knowledge outside the provided document.
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON object matching this schema with NO markdown code fences and NO conversational text:
@@ -188,8 +193,8 @@ Return ONLY a valid JSON object matching this schema with NO markdown code fence
       "options": ["Option A", "Option B", "Option C", "Option D"],
       "correctIndex": 0,
       "explanation": "Clear explanation of the correct choice...",
-      "sourcePages": [1],
-      "supportingText": "Exact supporting quote from the text"
+      "sourcePages": [2],
+      "supportingText": "Direct supporting quote from page 2"
     }
   ]
 }`;
@@ -207,25 +212,30 @@ Return ONLY a valid JSON object matching this schema with NO markdown code fence
       .replace(/\s*```$/i, "")
       .trim();
 
-    const parsed = JSON.parse(cleaned) as { questions?: GeneratedQuestion[] };
+    const parsed = JSON.parse(cleaned) as { questions?: RawGeneratedQuestion[] };
     if (!Array.isArray(parsed.questions) || parsed.questions.length === 0) {
       throw new Error("AI returned empty questions array.");
     }
 
-    const formattedQuestions = parsed.questions.slice(0, 5).map((q, idx) => ({
-      id: `q-${topic.id}-${idx + 1}-${Date.now()}`,
-      topic: topic.name,
-      prompt: String(q.prompt || `Question ${idx + 1}`),
-      options: Array.isArray(q.options) && q.options.length === 4
-        ? q.options.map(String)
-        : ["Option A", "Option B", "Option C", "Option D"],
-      correctIndex: typeof q.correctIndex === "number" && q.correctIndex >= 0 && q.correctIndex < 4
-        ? q.correctIndex
-        : 0,
-      explanation: String(q.explanation || "See study material for details."),
-      sourcePages: Array.isArray(q.sourcePages) ? q.sourcePages.map(Number) : (topic.source_page_numbers || []),
-      supportingText: q.supportingText ? String(q.supportingText) : topic.evidence_text || undefined,
-    }));
+    const formattedQuestions = parsed.questions.slice(0, 5).map((q, idx) => {
+      const citation = resolveQuestionCitation(q, chunksToUse);
+      return {
+        id: `q-${topic.id}-${idx + 1}-${Date.now()}`,
+        topic: topic.name,
+        prompt: String(q.prompt || `Question ${idx + 1}`),
+        options:
+          Array.isArray(q.options) && q.options.length === 4
+            ? q.options.map(String)
+            : ["Option A", "Option B", "Option C", "Option D"],
+        correctIndex:
+          typeof q.correctIndex === "number" && q.correctIndex >= 0 && q.correctIndex < 4
+            ? q.correctIndex
+            : 0,
+        explanation: String(q.explanation || "See study material for details."),
+        sourcePages: citation.sourcePages,
+        supportingText: citation.supportingText,
+      };
+    });
 
     return NextResponse.json({
       success: true,
@@ -242,4 +252,3 @@ Return ONLY a valid JSON object matching this schema with NO markdown code fence
     );
   }
 }
-
