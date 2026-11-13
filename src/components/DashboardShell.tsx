@@ -238,33 +238,34 @@ export function DashboardShell() {
           return dateA - dateB;
         });
 
-        setAttempts(
-          sortedAttempts.map((row) => {
-            const rawDate = row.date || row.created_at;
-            const dateObj = rawDate ? new Date(rawDate) : new Date();
-            const dateFormatted = dateObj.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-            const shortDateFormatted = dateObj.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-            });
+        const mappedAttempts: QuizAttempt[] = sortedAttempts.map((row) => {
+          const rawDate = row.date || row.created_at;
+          const dateObj = rawDate ? new Date(rawDate) : new Date();
+          const dateFormatted = dateObj.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+          const shortDateFormatted = dateObj.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          });
 
-            return {
-              id: String(row.id),
-              title: String(row.title ?? "Diagnostic Quiz"),
-              date: String(row.date || dateFormatted),
-              shortDate: String(row.short_date || shortDateFormatted),
-              score: Number(row.score ?? 0),
-              improvement: Number(row.improvement ?? 0),
-              questionsCount: Number(row.questions_count ?? 5),
-              durationMinutes: Number(row.duration_minutes ?? 5),
-              focusArea: String(row.focus_area ?? "General"),
-            };
-          })
-        );
+          return {
+            id: String(row.id),
+            topicId: row.topic_id ? String(row.topic_id) : undefined,
+            title: String(row.title ?? "Diagnostic Quiz"),
+            date: String(row.date || dateFormatted),
+            shortDate: String(row.short_date || shortDateFormatted),
+            score: Number(row.score ?? 0),
+            improvement: Number(row.improvement ?? 0),
+            questionsCount: Number(row.questions_count ?? 5),
+            durationMinutes: Number(row.duration_minutes ?? 5),
+            focusArea: String(row.focus_area ?? "General"),
+          };
+        });
+
+        setAttempts(mappedAttempts);
       } else if (attemptsRes.error) {
         console.error("[DashboardShell] Failed to fetch quiz_attempts:", {
           message: attemptsRes.error.message,

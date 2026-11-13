@@ -39,6 +39,7 @@ export interface TopicMasteryItem {
 
 export interface QuizAttempt {
   id: string;
+  topicId?: string;
   title: string;
   date: string;
   shortDate: string;

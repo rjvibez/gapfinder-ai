@@ -81,12 +81,13 @@ export function ProgressView({
         strictStatus = "weak";
       }
 
-      // Match actual quiz attempts for this topic
-      const topicAttempts = attempts.filter(
-        (a) =>
-          a.title.toLowerCase().includes(t.name.toLowerCase()) ||
-          a.focusArea.toLowerCase().includes(t.name.toLowerCase())
-      );
+      // Match genuine quiz attempts for this topic using exact topic ID first, then exact focusArea match
+      const topicAttempts = attempts.filter((a) => {
+        if (a.topicId && t.id) {
+          return a.topicId === t.id;
+        }
+        return a.focusArea.trim().toLowerCase() === t.name.trim().toLowerCase();
+      });
 
       const firstScore = topicAttempts[0]?.score;
       const latestScore = topicAttempts[topicAttempts.length - 1]?.score;
@@ -110,13 +111,13 @@ export function ProgressView({
   const totalTopics = classifiedTopics.length;
   const weakTopics = classifiedTopics.filter((t) => t.strictStatus === "weak");
   const mediumTopics = classifiedTopics.filter(
-    (t) => t.strictStatus === "medium"
+    (t) => t.strictStatus === "medium",
   );
   const strongTopics = classifiedTopics.filter(
-    (t) => t.strictStatus === "strong"
+    (t) => t.strictStatus === "strong",
   );
   const notAssessedTopics = classifiedTopics.filter(
-    (t) => t.strictStatus === "not_assessed"
+    (t) => t.strictStatus === "not_assessed",
   );
 
   // Overall Diagnostic Accuracy across all genuine saved attempts
@@ -143,15 +144,19 @@ export function ProgressView({
   // Compare an attempt ONLY against the previous attempt for the same topic.
   const attemptsWithTopicComparison = useMemo(() => {
     return attempts.map((attempt, index) => {
-      // Find the prior attempt for the SAME topic that occurred before this one
+      // Find the prior attempt for the SAME topic that occurred before this one (exact match)
       const previousSameTopic = attempts
         .slice(0, index)
         .reverse()
-        .find(
-          (a) =>
-            a.focusArea.toLowerCase() === attempt.focusArea.toLowerCase() ||
-            a.title.toLowerCase() === attempt.title.toLowerCase()
-        );
+        .find((a) => {
+          if (a.topicId && attempt.topicId) {
+            return a.topicId === attempt.topicId;
+          }
+          return (
+            a.focusArea.trim().toLowerCase() ===
+            attempt.focusArea.trim().toLowerCase()
+          );
+        });
 
       const delta = previousSameTopic
         ? attempt.score - previousSameTopic.score
@@ -242,7 +247,8 @@ export function ProgressView({
               2. Topic Mastery
             </span>
             <p className="mt-1 text-[11px] text-slate-600 leading-snug">
-              Categorized into Strong (≥80%), Medium (50–79%), and Weak (&lt;50%).
+              Categorized into Strong (≥80%), Medium (50–79%), and Weak
+              (&lt;50%).
             </p>
           </div>
 
@@ -289,9 +295,10 @@ export function ProgressView({
             Welcome to Your Learning Progress Dashboard
           </h3>
           <p className="mx-auto mt-2 max-w-lg text-xs leading-relaxed text-slate-500">
-            This dashboard dynamically visualizes your verified academic progress.
-            Scores, syllabus coverage, and learning curves update automatically
-            each time you complete a diagnostic quiz or check off revision tasks.
+            This dashboard dynamically visualizes your verified academic
+            progress. Scores, syllabus coverage, and learning curves update
+            automatically each time you complete a diagnostic quiz or check off
+            revision tasks.
           </p>
 
           <div className="mx-auto mt-6 grid max-w-2xl grid-cols-1 gap-3.5 sm:grid-cols-3 text-left">
@@ -463,7 +470,8 @@ export function ProgressView({
                           .slice(-5)
                           .reverse()
                           .map((attempt) => {
-                            const isBaseline = !attempt.hasPriorSameTopicAttempt;
+                            const isBaseline =
+                              !attempt.hasPriorSameTopicAttempt;
                             const delta = attempt.topicDelta;
 
                             let deltaLabel = "Baseline";
@@ -487,7 +495,10 @@ export function ProgressView({
                             }
 
                             return (
-                              <tr key={attempt.id} className="hover:bg-slate-50/60">
+                              <tr
+                                key={attempt.id}
+                                className="hover:bg-slate-50/60"
+                              >
                                 <td className="py-2.5 pr-2">
                                   <p className="font-semibold text-slate-900 truncate max-w-[130px]">
                                     {attempt.title}
@@ -591,7 +602,9 @@ export function ProgressView({
                           <p className="font-semibold text-slate-900">
                             {t.name}
                           </p>
-                          <p className="text-[11px] text-slate-500">{t.module}</p>
+                          <p className="text-[11px] text-slate-500">
+                            {t.module}
+                          </p>
                         </td>
 
                         <td className="whitespace-nowrap py-3 pr-4">
@@ -608,9 +621,7 @@ export function ProgressView({
 
                         <td className="whitespace-nowrap py-3 pr-4 font-mono text-slate-700 tabular-nums">
                           {t.questionsAnswered}{" "}
-                          {t.questionsAnswered === 1
-                            ? "question"
-                            : "questions"}
+                          {t.questionsAnswered === 1 ? "question" : "questions"}
                         </td>
 
                         <td className="whitespace-nowrap py-3 pr-4 text-slate-500">
@@ -620,9 +631,16 @@ export function ProgressView({
                         {/* Historical Assessment Trajectory (Requirement 5) */}
                         <td className="whitespace-nowrap py-3 pr-4 text-xs">
                           {t.topicAttempts.length === 0 ? (
-                            <span className="text-slate-400 italic text-[11px]">
-                              Awaiting first quiz
-                            </span>
+                            t.isAssessed ? (
+                              <span className="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                                Assessment recorded — attempt history
+                                unavailable
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 italic text-[11px]">
+                                Awaiting first quiz
+                              </span>
+                            )
                           ) : t.topicAttempts.length === 1 ? (
                             <span className="text-slate-600 text-[11px]">
                               1 attempt ({t.topicAttempts[0].score}%)

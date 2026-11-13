@@ -39,7 +39,7 @@ export function LearningProgressChart({ attempts }: LearningProgressChartProps) 
   const plotWidth = width - padLeft - padRight;
   const plotHeight = height - padTop - padBottom;
 
-  const minY = 40;
+  const minY = 0;
   const maxY = 100;
 
   const points = attempts.map((attempt, index) => {
@@ -61,7 +61,7 @@ export function LearningProgressChart({ attempts }: LearningProgressChartProps) 
     padTop + plotHeight
   ).toFixed(1)} L ${points[0].x.toFixed(1)} ${(padTop + plotHeight).toFixed(1)} Z`;
 
-  const yTicks = [40, 60, 80, 100];
+  const yTicks = [0, 20, 40, 60, 80, 100];
   const activePoint =
     hoveredIndex !== null && points[hoveredIndex]
       ? points[hoveredIndex]
@@ -155,7 +155,7 @@ export function LearningProgressChart({ attempts }: LearningProgressChartProps) 
                   x2={width - padRight}
                   y2={y}
                   stroke="#E2E8F0"
-                  strokeDasharray={tick === 40 ? undefined : "3 3"}
+                  strokeDasharray={tick === 0 ? undefined : "3 3"}
                   strokeWidth="1"
                 />
                 <text
